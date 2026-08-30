@@ -6,5 +6,5 @@
    e pela Edge Function no servidor. NUNCA coloque a "service_role"
    key neste arquivo.
    ============================================================ */
-const SUPABASE_URL = 'https://SEU-PROJETO.supabase.co';
-const SUPABASE_ANON_KEY = 'SUA-CHAVE-ANON-PUBLICA-AQUI';
+const SUPABASE_URL = 'https://wlfnwdusqtmvmopfsbhk.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_hds6pQcdrBaBzNnQyA530w_a_7eJyFK';
