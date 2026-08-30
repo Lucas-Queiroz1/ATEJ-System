@@ -83,18 +83,31 @@ const KANBAN_COLS = [
   { status:'concluido',  label:'Concluído', dot:'green' },
 ];
 
-/* ============ STORAGE (localStorage do navegador) ============ */
-function loadAll(){
+/* ============ STORAGE (Supabase — compartilhado entre todos os aparelhos) ============ */
+// Cada "mod" (clientes, servicos, etc.) corresponde a uma tabela igual no Supabase.
+const TABLES = { clientes:'clientes', servicos:'servicos', financeiro:'financeiro', equipe:'equipe', compromissos:'compromissos', documentos:'documentos' };
+
+async function loadAll(){
   for(const mod of ['clientes','servicos','financeiro','equipe','compromissos','documentos']){
     try{
-      const raw = localStorage.getItem(KEYS[mod]);
-      STATE[mod] = raw ? JSON.parse(raw) : [];
-    }catch(e){ STATE[mod] = []; }
+      const { data, error } = await window.sb.from(TABLES[mod]).select('*');
+      if(error){ console.error('Erro ao carregar '+mod, error); STATE[mod] = []; }
+      else STATE[mod] = data || [];
+    }catch(e){ console.error('Falha ao carregar '+mod, e); STATE[mod] = []; }
   }
 }
-function persist(mod){
-  try{ localStorage.setItem(KEYS[mod], JSON.stringify(STATE[mod])); }
-  catch(e){ console.error('Falha ao salvar', e); }
+// Estratégia simples: sempre que algo muda, regravamos a tabela inteira daquele
+// tipo com o que está em STATE agora. Funciona bem para o tamanho de dados de
+// uma pequena/média empresa e evita ter que reescrever cada tela uma por uma.
+async function persist(mod){
+  try{
+    const { error: delError } = await window.sb.from(TABLES[mod]).delete().neq('id', '__nunca__');
+    if(delError){ console.error('Erro ao limpar '+mod, delError); return; }
+    if(STATE[mod].length){
+      const { error: insError } = await window.sb.from(TABLES[mod]).insert(STATE[mod]);
+      if(insError) console.error('Erro ao salvar '+mod, insError);
+    }
+  }catch(e){ console.error('Falha ao salvar '+mod, e); }
 }
 
 /* ============ HELPERS ============ */
@@ -2213,49 +2226,52 @@ initMobileMenu();
 document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeModal(); });
 document.getElementById('drawer-overlay').addEventListener('click', e=>{ if(e.target.id==='drawer-overlay') closeClienteDrawer(); });
 
-loadAll();
-if(STATE.equipe.length===0 && !localStorage.getItem(KEYS.equipe)){
-  STATE.equipe = [
-    { id:uid(), nome:'Arielle Rocha', cargo:'Gestora de operações', setor:'Operações', email:'arielle@atej.com.br', telefone:'(85) 99110-2040', dataEntrada:'2024-02-01', status:'ativo', atividades:12, noPrazo:94, carga:84 },
-    { id:uid(), nome:'Lucas Costa', cargo:'Analista de processos', setor:'Operações', email:'lucas@atej.com.br', telefone:'', dataEntrada:'', status:'ativo', atividades:9, noPrazo:88, carga:63 },
-    { id:uid(), nome:'Breno Viana', cargo:'Analista financeiro', setor:'Financeiro', email:'breno@atej.com.br', telefone:'', dataEntrada:'', status:'ativo', atividades:7, noPrazo:91, carga:49 },
-    { id:uid(), nome:'João Silva', cargo:'Consultor de serviços', setor:'Comercial', email:'joao@atej.com.br', telefone:'', dataEntrada:'', status:'ferias', atividades:11, noPrazo:86, carga:77 },
-  ];
-  persist('equipe');
-}
+(async function iniciarPainel(){
+  await loadAll();
 
-if(STATE.clientes.length===0 && !localStorage.getItem(KEYS.clientes)){
-  const respId = nome => { const e = STATE.equipe.find(x=>x.nome===nome); return e ? e.id : ''; };
-  STATE.clientes = [
-    { id:uid(), nome:'Grupo Horizonte', cnpj:'12.345.678/0001-90', contatoNome:'Mariana Lopes', telefone:'(85) 98842-2100', email:'mariana@grupohorizonte.com.br', cidade:'Fortaleza, CE', status:'ativo', responsavelId:respId('Arielle Rocha'), clienteDesde:'2025-03-01', receitaMensal:8450, proximaAcaoTitulo:'Revisar contrato anual hoje, às 16h', proximaAcaoObs:'Acompanhamento operacional do cliente', observacoes:'' },
-    { id:uid(), nome:'Clínica Serene', cnpj:'23.456.789/0001-12', contatoNome:'Felipe Martins', telefone:'(85) 99128-4530', email:'felipe@clinicaserene.com.br', cidade:'Fortaleza, CE', status:'implantacao', responsavelId:respId('Lucas Costa'), clienteDesde:'2026-07-01', receitaMensal:6800, proximaAcaoTitulo:'Entrega da implantação em 29 de agosto', proximaAcaoObs:'Finalizar onboarding e configuração inicial', observacoes:'' },
-    { id:uid(), nome:'Mercado Central', cnpj:'34.567.890/0001-45', contatoNome:'Roberto Lima', telefone:'(88) 99774-1182', email:'roberto@mercadocentral.com.br', cidade:'Sobral, CE', status:'pendente', responsavelId:respId('Arielle Rocha'), clienteDesde:'2025-11-01', receitaMensal:4200, proximaAcaoTitulo:'Cobrar documentos fiscais pendentes', proximaAcaoObs:'Aguardando retorno do cliente', observacoes:'' },
-    { id:uid(), nome:'Aurea Consultoria', cnpj:'45.678.901/0001-78', contatoNome:'Lívia Rocha', telefone:'(85) 98561-9023', email:'livia@aureaconsultoria.com.br', cidade:'Fortaleza, CE', status:'ativo', responsavelId:respId('João Silva'), clienteDesde:'2025-05-01', receitaMensal:5900, proximaAcaoTitulo:'Reunião de resultado em 3 de setembro', proximaAcaoObs:'Apresentação de indicadores mensais', observacoes:'' },
-    { id:uid(), nome:'Bela Vista Hotel', cnpj:'56.789.012/0001-34', contatoNome:'Camila Alves', telefone:'(85) 99402-6630', email:'camila@belavistahotel.com.br', cidade:'Fortaleza, CE', status:'pendente', responsavelId:respId('João Silva'), clienteDesde:'2026-08-01', receitaMensal:0, proximaAcaoTitulo:'Aguardar aprovação da proposta comercial', proximaAcaoObs:'Proposta enviada, sem retorno ainda', observacoes:'' },
-  ];
-  persist('clientes');
+  // Os dados de exemplo (Grupo Horizonte, Arielle Rocha, etc.) só são criados
+  // UMA VEZ, na primeira vez que alguém usa o painel — depois disso, mesmo que
+  // a lista fique vazia (porque alguém apagou tudo), não volta a criar de novo.
+  const jaSemeado = localStorage.getItem('atej_dados_exemplo_criados');
+  if(!jaSemeado && STATE.equipe.length===0 && STATE.clientes.length===0){
+    STATE.equipe = [
+      { id:uid(), nome:'Arielle Rocha', cargo:'Gestora de operações', setor:'Operações', email:'arielle@atej.com.br', telefone:'(85) 99110-2040', dataEntrada:'2024-02-01', status:'ativo', atividades:12, noPrazo:94, carga:84 },
+      { id:uid(), nome:'Lucas Costa', cargo:'Analista de processos', setor:'Operações', email:'lucas@atej.com.br', telefone:'', dataEntrada:'', status:'ativo', atividades:9, noPrazo:88, carga:63 },
+      { id:uid(), nome:'Breno Viana', cargo:'Analista financeiro', setor:'Financeiro', email:'breno@atej.com.br', telefone:'', dataEntrada:'', status:'ativo', atividades:7, noPrazo:91, carga:49 },
+      { id:uid(), nome:'João Silva', cargo:'Consultor de serviços', setor:'Comercial', email:'joao@atej.com.br', telefone:'', dataEntrada:'', status:'ferias', atividades:11, noPrazo:86, carga:77 },
+    ];
+    await persist('equipe');
 
-  if(STATE.servicos.length===0 && !localStorage.getItem(KEYS.servicos)){
+    const respId = nome => { const e = STATE.equipe.find(x=>x.nome===nome); return e ? e.id : ''; };
+    STATE.clientes = [
+      { id:uid(), nome:'Grupo Horizonte', cnpj:'12.345.678/0001-90', contatoNome:'Mariana Lopes', telefone:'(85) 98842-2100', email:'mariana@grupohorizonte.com.br', cidade:'Fortaleza, CE', status:'ativo', responsavelId:respId('Arielle Rocha'), clienteDesde:'2025-03-01', receitaMensal:8450, proximaAcaoTitulo:'Revisar contrato anual hoje, às 16h', proximaAcaoObs:'Acompanhamento operacional do cliente', observacoes:'' },
+      { id:uid(), nome:'Clínica Serene', cnpj:'23.456.789/0001-12', contatoNome:'Felipe Martins', telefone:'(85) 99128-4530', email:'felipe@clinicaserene.com.br', cidade:'Fortaleza, CE', status:'implantacao', responsavelId:respId('Lucas Costa'), clienteDesde:'2026-07-01', receitaMensal:6800, proximaAcaoTitulo:'Entrega da implantação em 29 de agosto', proximaAcaoObs:'Finalizar onboarding e configuração inicial', observacoes:'' },
+      { id:uid(), nome:'Mercado Central', cnpj:'34.567.890/0001-45', contatoNome:'Roberto Lima', telefone:'(88) 99774-1182', email:'roberto@mercadocentral.com.br', cidade:'Sobral, CE', status:'pendente', responsavelId:respId('Arielle Rocha'), clienteDesde:'2025-11-01', receitaMensal:4200, proximaAcaoTitulo:'Cobrar documentos fiscais pendentes', proximaAcaoObs:'Aguardando retorno do cliente', observacoes:'' },
+      { id:uid(), nome:'Aurea Consultoria', cnpj:'45.678.901/0001-78', contatoNome:'Lívia Rocha', telefone:'(85) 98561-9023', email:'livia@aureaconsultoria.com.br', cidade:'Fortaleza, CE', status:'ativo', responsavelId:respId('João Silva'), clienteDesde:'2025-05-01', receitaMensal:5900, proximaAcaoTitulo:'Reunião de resultado em 3 de setembro', proximaAcaoObs:'Apresentação de indicadores mensais', observacoes:'' },
+      { id:uid(), nome:'Bela Vista Hotel', cnpj:'56.789.012/0001-34', contatoNome:'Camila Alves', telefone:'(85) 99402-6630', email:'camila@belavistahotel.com.br', cidade:'Fortaleza, CE', status:'pendente', responsavelId:respId('João Silva'), clienteDesde:'2026-08-01', receitaMensal:0, proximaAcaoTitulo:'Aguardar aprovação da proposta comercial', proximaAcaoObs:'Proposta enviada, sem retorno ainda', observacoes:'' },
+    ];
+    await persist('clientes');
+
     const grupoHorizonte = STATE.clientes.find(c=>c.nome==='Grupo Horizonte').id;
     const clinicaSerene = STATE.clientes.find(c=>c.nome==='Clínica Serene').id;
+    const aurea = STATE.clientes.find(c=>c.nome==='Aurea Consultoria').id;
     STATE.servicos = [
       { id:uid(), clienteId:grupoHorizonte, clienteNome:'Grupo Horizonte', titulo:'Gestão e acompanhamento', descricao:'Acompanhamento mensal de indicadores e resultados.', valor:8450, status:'andamento', dataInicio:'2025-03-01', prazoEntrega:'', responsavelId:respId('Arielle Rocha'), progresso:70 },
       { id:uid(), clienteId:clinicaSerene, clienteNome:'Clínica Serene', titulo:'Implantação do sistema', descricao:'Configuração inicial e treinamento da equipe.', valor:6800, status:'andamento', dataInicio:'2026-07-01', prazoEntrega:'2026-08-29', responsavelId:respId('Lucas Costa'), progresso:85 },
     ];
-    persist('servicos');
-  }
-  if(STATE.financeiro.length===0 && !localStorage.getItem(KEYS.financeiro)){
-    const grupoHorizonte = STATE.clientes.find(c=>c.nome==='Grupo Horizonte').id;
-    const aurea = STATE.clientes.find(c=>c.nome==='Aurea Consultoria').id;
+    await persist('servicos');
+
     STATE.financeiro = [
       { id:uid(), clienteId:grupoHorizonte, clienteNome:'Grupo Horizonte', tipo:'receita', descricao:'Mensalidade – Grupo Horizonte', valor:8450, vencimento:'2026-08-05', status:'pago', dataPagamento:'2026-08-05' },
       { id:uid(), clienteId:aurea, clienteNome:'Aurea Consultoria', tipo:'receita', descricao:'Mensalidade – Aurea Consultoria', valor:5900, vencimento:'2026-09-05', status:'pendente', dataPagamento:'' },
     ];
-    persist('financeiro');
-  }
-}
+    await persist('financeiro');
 
-render();
+    localStorage.setItem('atej_dados_exemplo_criados', '1');
+  }
+
+  render();
+})();
 
 /* ============ ATUALIZAÇÃO AUTOMÁTICA DE DATA ============ */
 // Mantém a data do topo, o "hoje" dos calendários e os status (atrasado/pago etc.)
