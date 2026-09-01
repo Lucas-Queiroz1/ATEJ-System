@@ -1,5 +1,5 @@
 // ============================================================
-// ATEJ · Painel de Gestão — criação de usuários (somente admin)
+// ATEJ · Painel de Gestão — criação e exclusão de usuários (somente admin)
 //
 // Esta função roda no servidor do Supabase, nunca no navegador.
 // Por isso ela pode usar a "service role key" com segurança —
@@ -50,8 +50,69 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3) Lê os dados do novo usuário
-    const { email, senha, nome, role } = await req.json();
+    // 3) Lê os dados enviados e decide se é para criar ou excluir um usuário
+    const body = await req.json();
+    const acao = body.acao === "excluir" ? "excluir" : (body.acao === "editar" ? "editar" : "criar");
+
+    if (acao === "excluir") {
+      const { id } = body;
+      if (!id) {
+        return new Response(JSON.stringify({ error: "Informe o usuário a excluir." }), { status: 400, headers: cors });
+      }
+      if (id === callerData.user.id) {
+        return new Response(JSON.stringify({ error: "Você não pode excluir o seu próprio acesso." }), { status: 400, headers: cors });
+      }
+
+      const { error: delProfileErr } = await admin.from("profiles").delete().eq("id", id);
+      if (delProfileErr) {
+        return new Response(JSON.stringify({ error: delProfileErr.message }), { status: 400, headers: cors });
+      }
+
+      const { error: delAuthErr } = await admin.auth.admin.deleteUser(id);
+      if (delAuthErr) {
+        return new Response(JSON.stringify({ error: delAuthErr.message }), { status: 400, headers: cors });
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    if (acao === "editar") {
+      const { id, nome, role, novaSenha } = body;
+      if (!id || !nome) {
+        return new Response(JSON.stringify({ error: "Informe o usuário e o nome." }), { status: 400, headers: cors });
+      }
+      if (novaSenha && String(novaSenha).length < 6) {
+        return new Response(JSON.stringify({ error: "A nova senha precisa ter pelo menos 6 caracteres." }), {
+          status: 400,
+          headers: cors,
+        });
+      }
+
+      const { error: updProfileErr } = await admin
+        .from("profiles")
+        .update({ nome, role: role === "admin" ? "admin" : "user" })
+        .eq("id", id);
+      if (updProfileErr) {
+        return new Response(JSON.stringify({ error: updProfileErr.message }), { status: 400, headers: cors });
+      }
+
+      if (novaSenha) {
+        const { error: updPassErr } = await admin.auth.admin.updateUserById(id, { password: novaSenha });
+        if (updPassErr) {
+          return new Response(JSON.stringify({ error: updPassErr.message }), { status: 400, headers: cors });
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+
+    const { email, senha, nome, role } = body;
     if (!email || !senha || !nome) {
       return new Response(JSON.stringify({ error: "Preencha e-mail, senha e nome." }), { status: 400, headers: cors });
     }
