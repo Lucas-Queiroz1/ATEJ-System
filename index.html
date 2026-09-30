@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel de Gestão</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* fica invisível até o auth.js confirmar a sessão — evita mostrar o
+     painel por um instante para quem não está logado */
+  html.auth-checking{ visibility:hidden; }
+</style>
+<script>
+  document.documentElement.classList.add('auth-checking');
+  (function(){
+    try{
+      if(localStorage.getItem('tema') === 'escuro'){
+        document.documentElement.setAttribute('data-theme','dark');
+      }
+    }catch(e){}
+  })();
+</script>
+</head>
+<body>
+
+<div class="app">
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <img class="brand-mark" id="brand-mark" src="logo_icon.png" alt="ATEJ">
+      <div class="brand-name" id="brand-name">ATEJ</div>
+    </div>
+    <div class="menu-label">Menu</div>
+    <nav class="modules" id="nav"></nav>
+    <div class="sidebar-user">
+      <div class="avatar" id="user-avatar">A</div>
+      <div class="user-meta"><strong id="user-name">Arielle</strong><span>Membro</span></div>
+      <svg class="logout-icon" id="btn-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Sair"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="icon-btn hamburger-btn" id="btn-hamburger" title="Menu" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <h1 id="page-title">Dashboard</h1>
+      <div class="topbar-actions" id="topbar-actions">
+        <div class="search-box" id="search-box" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" id="search-input" placeholder="Buscar...">
+        </div>
+        <select id="filter-select" style="display:none"></select>
+        <div class="date" id="topbar-date"></div>
+        <div class="settings-wrap" id="settings-wrap">
+          <button class="icon-btn" id="btn-settings" title="Aparência" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+          <div class="settings-panel" id="settings-panel">
+            <div class="settings-panel-title">Aparência</div>
+            <div class="settings-row">
+              <span>Modo escuro</span>
+              <label class="switch"><input type="checkbox" id="theme-toggle"><span class="slider"></span></label>
+            </div>
+            <div class="settings-row">
+              <span>Cor do menu</span>
+              <input type="color" id="menu-bg-color" class="color-input">
+            </div>
+            <div class="settings-row">
+              <span>Cor de destaque</span>
+              <input type="color" id="menu-accent-color" class="color-input">
+            </div>
+            <button class="settings-reset" id="settings-reset" type="button">Restaurar padrão</button>
+          </div>
+        </div>
+        <button class="btn" id="btn-new" style="display:none"></button>
+      </div>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-head"><h3 id="modal-title">Novo registro</h3><button id="modal-close">&times;</button></div>
+    <form class="modal-body" id="modal-body" autocomplete="on"></form>
+    <div class="modal-foot" id="modal-foot"><button class="btn ghost" id="modal-cancel" type="button">Cancelar</button><button class="btn" id="modal-save" type="submit" form="modal-body">Salvar</button></div>
+  </div>
+</div>
+
+<div class="drawer-overlay" id="drawer-overlay">
+  <div class="drawer" id="client-drawer"></div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="supabase-config.js"></script>
+<script src="auth.js"></script>
+</body>
+</html>
