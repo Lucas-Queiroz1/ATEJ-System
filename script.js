@@ -52,7 +52,7 @@ ICONS.usuarios = ICONS.shield; // ícone do item de menu "Usuários" (admin)
 ICONS.demandas = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3"/><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h6"/></svg>';
 
 /* ============ ESTADO ============ */
-const STATE = { clientes: [], servicos: [], financeiro: [], equipe: [], compromissos: [], documentos: [], usuarios: [], demandas: [] };
+const STATE = { clientes: [], servicos: [], financeiro: [], equipe: [], compromissos: [], documentos: [], usuarios: [], demandas: [], atividades: [] };
 let currentModule = 'dashboard';
 let searchTerm = '';
 let drawerToReopen = null; // id do cliente cuja gaveta deve reabrir ao fechar o modal (fluxo "novo/editar serviço" a partir do cliente)
@@ -86,13 +86,13 @@ const KANBAN_COLS = [
 
 /* ============ STORAGE (Supabase — compartilhado entre todos os aparelhos) ============ */
 // Cada "mod" (clientes, servicos, etc.) corresponde a uma tabela igual no Supabase.
-const TABLES = { clientes:'clientes', servicos:'servicos', financeiro:'financeiro', equipe:'equipe', compromissos:'compromissos', documentos:'documentos', demandas:'demandas' };
+const TABLES = { clientes:'clientes', servicos:'servicos', financeiro:'financeiro', equipe:'equipe', compromissos:'compromissos', documentos:'documentos', demandas:'demandas', atividades:'atividades' };
 const EQUIPE_BUCKET = 'avatars'; // bucket do Supabase Storage onde ficam as fotos dos colaboradores
 let equipeFotoFile = null; // arquivo de foto escolhido no modal de colaborador (temporário, até salvar)
 let clienteFotoFile = null; // idem, para o modal de cliente
 
 async function loadAll(){
-  for(const mod of ['clientes','servicos','financeiro','equipe','compromissos','documentos','demandas']){
+  for(const mod of ['clientes','servicos','financeiro','equipe','compromissos','documentos','demandas','atividades']){
     try{
       const { data, error } = await window.sb.from(TABLES[mod]).select('*');
       if(error){ console.error('Erro ao carregar '+mod, error); STATE[mod] = []; }
@@ -248,6 +248,7 @@ async function gerarLancamentosRecorrentes(){
 
   if(mudouFin) await persist('financeiro');
   if(mudouServ) await persist('servicos');
+  if(mudouAtv) await persist('atividades');
 }
 
 // Marca como "Atrasado" automaticamente o que passou 1 dia do vencimento sem
@@ -265,6 +266,17 @@ async function verificarAtrasos(){
     if(s.status === 'aguardando' || s.status === 'andamento'){
       s.status = 'atrasado';
       mudouServ = true;
+    }
+  });
+
+  let mudouAtv = false;
+  STATE.atividades.forEach(a => {
+    if(!a.prazo || a.prazo >= hoje) return;
+    if(a.status === 'aguardando' || a.status === 'andamento'){
+      a.status = 'atrasado';
+      mudouAtv = true;
+      const sv = a.servicoId ? STATE.servicos.find(x=>x.id===a.servicoId) : null;
+      if(sv && (sv.status==='aguardando' || sv.status==='andamento')){ sv.status = 'atrasado'; mudouServ = true; }
     }
   });
 
@@ -361,7 +373,7 @@ function render(){
     dateEl.style.display='none';
     newBtn.style.display='inline-flex';
     newBtn.innerHTML = ICONS.plus + '<span>Nova Atividade</span>';
-    newBtn.onclick = () => openModal('servicos');
+    newBtn.onclick = () => openAtividadeModal();
   } else if(currentModule==='equipe' || currentModule==='clientes' || currentModule==='documentos' || currentModule==='relatorios' || currentModule==='usuarios'){
     searchBox.style.display='none';
     filterSelect.style.display='none';
@@ -385,7 +397,7 @@ function render(){
 
     newBtn.style.display='inline-flex';
     newBtn.innerHTML = ICONS.plus + '<span>'+NEW_LABEL[currentModule]+'</span>';
-    newBtn.onclick = () => openModal(currentModule==='kanban' ? 'servicos' : currentModule);
+    newBtn.onclick = () => currentModule==='kanban' ? openAtividadeModal() : openModal(currentModule);
   }
 
   renderContent();
@@ -440,9 +452,9 @@ function dashChartHTML(y, m){
 }
 function dashFlowBoard(){
   const cols = KANBAN_COLS.filter(c=>c.status!=='concluido');
-  if(STATE.servicos.length===0) return `<div class="empty" style="padding:30px 0">Nenhuma atividade cadastrada ainda.</div>`;
+  if(kanbanBase().length===0) return `<div class="empty" style="padding:30px 0">Nenhuma atividade cadastrada ainda.</div>`;
   return `<div class="dash-flow-board">${cols.map(col=>{
-    const all = STATE.servicos.filter(s=>s.status===col.status);
+    const all = kanbanBase().filter(s=>s.status===col.status);
     const items = all.slice(0,3);
     return `<div class="dash-flow-col">
       <div class="dash-flow-col-head"><span class="kanban-dot ${col.dot}"></span>${col.label}<span class="kanban-count">${all.length}</span></div>
@@ -690,19 +702,30 @@ function clienteServicos(id){ return STATE.servicos.filter(s=>s.clienteId===id);
 function clienteFinanceiro(id){ return STATE.financeiro.filter(f=>f.clienteId===id); }
 
 /* ============ KANBAN ============ */
+const escHTML = v => String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// Itens do quadro = serviços "soltos" + atividades do Kanban.
+// Serviço vinculado a uma atividade NÃO aparece duas vezes: quem aparece é a atividade.
+function kanbanBase(){
+  const vinculados = new Set(STATE.atividades.filter(a=>a.servicoId).map(a=>a.servicoId));
+  return [
+    ...STATE.servicos.filter(s=>!vinculados.has(s.id)).map(s=>({ ...s, _kind:'servico' })),
+    ...STATE.atividades.map(a=>({ ...a, _kind:'atividade' })),
+  ];
+}
 function kanbanItems(){
-  let items = [...STATE.servicos];
+  let items = kanbanBase();
   if(searchTerm.trim()){
     const q = searchTerm.trim().toLowerCase();
-    items = items.filter(x => (x.titulo||'').toLowerCase().includes(q) || clienteNome(x.clienteId).toLowerCase().includes(q));
+    items = items.filter(x => (x.titulo||'').toLowerCase().includes(q) || (x.clienteId ? clienteNome(x.clienteId) : 'interna').toLowerCase().includes(q));
   }
   return items;
 }
 
 function renderKanban(){
   const items = kanbanItems();
-  if(STATE.servicos.length===0){
-    return emptyState('Nenhuma atividade ainda','Crie um serviço para vê-lo aparecer aqui como um card no quadro.');
+  if(kanbanBase().length===0){
+    return emptyState('Nenhuma atividade ainda','Crie uma atividade (interna ou de cliente) ou um serviço para vê-lo aparecer aqui como um card no quadro.');
   }
   const cols = KANBAN_COLS.map(col=>{
     const colItems = items.filter(x=>x.status===col.status);
@@ -725,29 +748,35 @@ function renderKanban(){
 }
 
 function kanbanCardHTML(x, compact){
-  const respId = x.responsavelId;
-  const respNome = respId ? responsavelNome(respId) : '';
-  const avatarHTML = respId && respNome
-    ? `<div class="kanban-avatar" style="background:${avatarColor(respId)}" title="${respNome}">${initials(respNome)}</div>`
-    : '';
+  const isAtv = x._kind === 'atividade';
+  const editMod = isAtv ? 'atividades' : 'servicos';
+  const respIds = isAtv ? (Array.isArray(x.responsaveisIds) ? x.responsaveisIds : []) : (x.responsavelId ? [x.responsavelId] : []);
+  const avatarHTML = respIds.filter(id=>responsavelNome(id)).slice(0,3).map(id=>{
+    const n = responsavelNome(id);
+    return `<div class="kanban-avatar" style="background:${avatarColor(id)}" title="${escHTML(n)}">${initials(n)}</div>`;
+  }).join('');
+  const extraResp = respIds.length > 3 ? `<span class="kanban-date">+${respIds.length-3}</span>` : '';
   const atrasadoBadge = x.status==='atrasado' ? `<div class="kanban-late">${ICONS.clock}Atrasado</div>` : '';
   const dragAttr = compact ? '' : 'draggable="true"';
   const clickAttr = compact ? 'data-goto="kanban"' : '';
   const actionsHTML = compact ? '' : `
         <div class="row-actions">
-          <button class="icon-btn kanban-mini-btn" data-edit="servicos" data-id="${x.id}" title="Editar">${ICONS.edit}</button>
-          <button class="icon-btn danger kanban-mini-btn" data-del="servicos" data-id="${x.id}" title="Excluir">${ICONS.trash}</button>
+          <button class="icon-btn kanban-mini-btn" data-edit="${editMod}" data-id="${x.id}" title="Editar">${ICONS.edit}</button>
+          <button class="icon-btn danger kanban-mini-btn" data-del="${editMod}" data-id="${x.id}" title="Excluir">${ICONS.trash}</button>
         </div>`;
+  const badgeTxt = x.clienteId ? clienteNome(x.clienteId) : (isAtv ? 'Interna' : '—');
+  const linkTag = (isAtv && x.servicoId) ? `<span class="kanban-tag" title="Vinculada à aba Serviços">Serviço</span>` : '';
+  const prazo = isAtv ? x.prazo : x.prazoEntrega;
   return `
     <div class="kanban-card${compact?' compact':''}" ${dragAttr} data-kanban-id="${x.id}" ${clickAttr}>
       <div class="kanban-card-top">
-        <span class="kanban-badge">${clienteNome(x.clienteId)}</span>${actionsHTML}
+        <span class="kanban-badge${isAtv && !x.clienteId ? ' interna' : ''}">${escHTML(badgeTxt)}</span>${actionsHTML}
       </div>
-      <div class="kanban-card-title">${x.titulo}</div>
+      <div class="kanban-card-title">${escHTML(x.titulo)}</div>
       ${atrasadoBadge}
       <div class="kanban-card-foot">
-        <span class="kanban-date">${ICONS.clock}${fmtDate(x.prazoEntrega)}</span>
-        ${avatarHTML}
+        <span class="kanban-date">${ICONS.clock}${fmtDate(prazo)}</span>
+        <span style="display:flex;align-items:center;gap:4px">${linkTag}${avatarHTML}${extraResp}</span>
       </div>
     </div>`;
 }
@@ -774,19 +803,27 @@ function attachKanbanEvents(){
       e.preventDefault();
       col.classList.remove('drag-over');
       const id = e.dataTransfer.getData('text/plain');
-      const item = findItem('servicos', id);
+      const atv = findItem('atividades', id);
+      const item = atv || findItem('servicos', id);
       const newStatus = col.dataset.kanbanCol;
       if(item && item.status !== newStatus){
         if(newStatus==='concluido') item.dataConclusao = todayISO();
         item.status = newStatus;
-        persist('servicos');
+        if(atv){
+          persist('atividades');
+          // mantém o serviço vinculado com o mesmo status (sem mexer em valores/financeiro)
+          const sv = atv.servicoId ? findItem('servicos', atv.servicoId) : null;
+          if(sv){ sv.status = newStatus; if(newStatus==='concluido') sv.dataConclusao = todayISO(); persist('servicos'); }
+        } else {
+          persist('servicos');
+        }
         toast('Atividade movida para "'+servicoStatusLabel(newStatus)+'".');
         refreshKanban();
       }
     });
   });
   document.querySelectorAll('[data-kanban-add]').forEach(btn=>{
-    btn.addEventListener('click', ()=> openModal('servicos', null, { status: btn.dataset.kanbanAdd }));
+    btn.addEventListener('click', ()=> openAtividadeModal(null, { status: btn.dataset.kanbanAdd }));
   });
 }
 
@@ -2187,6 +2224,8 @@ function attachContentEvents(){
   document.querySelectorAll('[data-del]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const mod = btn.dataset.del, id = btn.dataset.id;
+      if(mod==='atividades'){ excluirAtividade(id); return; }
+      if(mod==='servicos') desvincularAtividadeDoServico(id);
       STATE[mod] = STATE[mod].filter(x=>x.id!==id);
       persistDelete(mod, id);
       toast('Registro removido.');
@@ -2196,6 +2235,7 @@ function attachContentEvents(){
   document.querySelectorAll('[data-edit]').forEach(btn=>{
     btn.addEventListener('click', ()=> {
       if(btn.dataset.edit==='documentos') openDocumentoModal(btn.dataset.id);
+      else if(btn.dataset.edit==='atividades') openAtividadeModal(btn.dataset.id);
       else openModal(btn.dataset.edit, btn.dataset.id);
     });
   });
@@ -2818,6 +2858,7 @@ async function saveForm(mod, editId){
     else if(previousSnapshot){ const idx = STATE[mod].findIndex(x=>x.id===editId); if(idx>-1) STATE[mod][idx] = previousSnapshot; }
     return;
   }
+  if(mod==='servicos' && obj.atividadeId){ await sincronizarAtividadeDoServico(obj); }
   toast(isNew ? 'Registro salvo com sucesso.' : 'Registro atualizado com sucesso.');
   closeModal();
   renderContent();
@@ -2828,6 +2869,232 @@ async function saveForm(mod, editId){
       toast('Cliente cadastrado! Agora cadastre o serviço dele.');
     }, 200);
   }
+}
+
+/* ============ ATIVIDADES DO KANBAN (internas ou de cliente) ============
+   - Tabela própria "atividades" (não aparece em Serviços, a menos que seja vinculada).
+   - Cliente é opcional; não existe campo de valor → nunca gera cobrança.
+   - "Vincular como serviço": cria (ou reaproveita) UM registro em Serviços, ligado por
+     atividade.servicoId <-> servico.atividadeId. O serviço criado nasce com valor 0. */
+const ATV_NOVO = '__novo__';
+const normTxt = t => String(t||'').trim().toLowerCase().replace(/\s+/g,' ');
+
+// serviços que ainda não pertencem a nenhuma atividade (ou que já são desta)
+function servicosLivresParaVinculo(atvId){
+  return STATE.servicos.filter(s => !s.atividadeId || s.atividadeId === atvId);
+}
+// procura serviço "igual" (mesmo título + mesmo cliente) para evitar duplicar
+function servicoEquivalente(titulo, clienteId, atvId){
+  const t = normTxt(titulo);
+  if(!t) return null;
+  return servicosLivresParaVinculo(atvId).find(s => normTxt(s.titulo)===t && (s.clienteId||'')===(clienteId||'')) || null;
+}
+
+function openAtividadeModal(id, preset){
+  const editing = !!id;
+  const current = editing ? findItem('atividades', id) : (preset || {});
+  if(editing && !current) return;
+
+  document.getElementById('modal-title').textContent = editing ? 'Editar atividade' : 'Nova atividade';
+  document.getElementById('modal-foot').innerHTML = `<button class="btn ghost" id="modal-cancel" type="button">Cancelar</button><button class="btn" id="modal-save" type="submit" form="modal-body">Salvar</button>`;
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  const modalEl = document.querySelector('.modal');
+  if(modalEl) modalEl.classList.remove('modal-lg');
+
+  const resp = Array.isArray(current.responsaveisIds) ? current.responsaveisIds : [];
+  const statusOpts = [['aguardando','Aguardando'],['andamento','Em Andamento'],['concluido','Concluído'],['atrasado','Atrasado']];
+  const st = current.status || 'aguardando';
+  const clienteOpts = [['', 'Sem cliente (atividade interna)'], ...clienteOptions()];
+  const equipeChecks = STATE.equipe.length
+    ? STATE.equipe.map(p => `<label style="display:inline-flex;align-items:center;gap:6px;margin:0 12px 6px 0;font-weight:500;cursor:pointer">
+        <input type="checkbox" class="atv-resp" value="${p.id}" ${resp.includes(p.id)?'checked':''}> ${escHTML(p.nome)}</label>`).join('')
+    : '<span style="font-size:12.5px;color:var(--slate)">Nenhum colaborador cadastrado na aba Equipe.</span>';
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field"><label>Título / descrição *</label>
+      <input id="f_atv_titulo" type="text" autocomplete="off" placeholder="Ex: Entrega do projeto à Defensoria" value="${escHTML(current.titulo||'')}"></div>
+    <div class="field"><label>Detalhes</label>
+      <textarea id="f_atv_descricao" autocomplete="off" placeholder="Detalhes da atividade...">${escHTML(current.descricao||'')}</textarea></div>
+    <div class="row-2">
+      <div class="field"><label>Prazo</label><input id="f_atv_prazo" type="date" value="${current.prazo||''}"></div>
+      <div class="field"><label>Status</label>
+        <select id="f_atv_status">${statusOpts.map(([v,l])=>`<option value="${v}" ${st===v?'selected':''}>${l}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Responsáveis</label><div>${equipeChecks}</div></div>
+    <div class="field"><label>Cliente (opcional)</label>
+      <select id="f_atv_cliente">${clienteOpts.map(([v,l])=>`<option value="${v}" ${(current.clienteId||'')===v?'selected':''}>${escHTML(l)}</option>`).join('')}</select></div>
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="checkbox" id="f_atv_vincular" ${current.servicoId?'checked':''}> Vincular como serviço
+      </label>
+      <small style="color:var(--slate);font-size:12px">Ativado: a atividade passa a existir também na aba Serviços (sem valor e sem cobrança automática). Desativado: fica somente no Kanban.</small>
+    </div>
+    <div class="field" id="atv-servico-wrap" style="display:none"><label>Serviço</label>
+      <select id="f_atv_servico"></select>
+      <small id="atv-servico-hint" style="color:var(--slate);font-size:12px"></small></div>`;
+
+  const elTit = document.getElementById('f_atv_titulo');
+  const elCli = document.getElementById('f_atv_cliente');
+  const elVinc = document.getElementById('f_atv_vincular');
+  const elWrap = document.getElementById('atv-servico-wrap');
+  const elSel = document.getElementById('f_atv_servico');
+  const elHint = document.getElementById('atv-servico-hint');
+  let escolhaManual = false;
+
+  const montarServicos = () => {
+    elWrap.style.display = elVinc.checked ? '' : 'none';
+    if(!elVinc.checked) return;
+    const atual = current.servicoId || null;
+    const equiv = servicoEquivalente(elTit.value, elCli.value || null, id);
+    const livres = servicosLivresParaVinculo(id);
+    elSel.innerHTML = `<option value="${ATV_NOVO}">+ Criar novo serviço a partir desta atividade</option>` +
+      livres.map(s=>`<option value="${s.id}">${escHTML(s.titulo)} — ${escHTML(s.clienteId ? clienteNome(s.clienteId) : 'sem cliente')}</option>`).join('');
+    if(!escolhaManual){
+      if(atual && livres.some(s=>s.id===atual)) elSel.value = atual;
+      else if(equiv) elSel.value = equiv.id;
+      else elSel.value = ATV_NOVO;
+    }
+    elHint.textContent = (!atual && equiv && elSel.value===equiv.id) ? 'Já existe um serviço igual — ele será reaproveitado (nada será duplicado).' : '';
+  };
+  elSel.addEventListener('change', ()=>{ escolhaManual = true; });
+  [elTit, elCli].forEach(el => el.addEventListener('input', montarServicos));
+  elCli.addEventListener('change', montarServicos);
+  elVinc.addEventListener('change', montarServicos);
+  montarServicos();
+
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('modal-save').onclick = () => saveAtividade(editing ? id : null, current);
+}
+
+let salvandoAtividade = false;
+async function saveAtividade(editId, current){
+  if(salvandoAtividade) return; // evita clique duplo → registro duplicado
+  const titulo = document.getElementById('f_atv_titulo').value.trim();
+  if(!titulo){ toast('Informe o título ou a descrição da atividade.'); return; }
+  const vincular = document.getElementById('f_atv_vincular').checked;
+  const escolha = document.getElementById('f_atv_servico').value;
+  const clienteId = document.getElementById('f_atv_cliente').value || null;
+
+  const prev = editId ? findItem('atividades', editId) : null;
+  const obj = prev ? { ...prev } : { id: uid(), dataAbertura: todayISO() };
+  obj.titulo = titulo;
+  obj.descricao = document.getElementById('f_atv_descricao').value;
+  obj.prazo = document.getElementById('f_atv_prazo').value || null;
+  obj.status = document.getElementById('f_atv_status').value;
+  obj.clienteId = clienteId;
+  obj.clienteNome = clienteId ? clienteNome(clienteId) : null;
+  obj.responsaveisIds = [...document.querySelectorAll('.atv-resp:checked')].map(c=>c.value);
+  if(obj.status==='concluido' && (!prev || prev.status!=='concluido')) obj.dataConclusao = todayISO();
+  if(obj.status!=='concluido') obj.dataConclusao = null;
+
+  salvandoAtividade = true;
+  const btn = document.getElementById('modal-save'); if(btn) btn.disabled = true;
+  try{
+    // ----- vínculo com Serviços -----
+    const servicoAnterior = obj.servicoId ? findItem('servicos', obj.servicoId) : null;
+
+    if(!vincular){
+      if(servicoAnterior){
+        const temDinheiro = Number(servicoAnterior.valor||0) > 0 || STATE.financeiro.some(f=>f.servicoId===servicoAnterior.id);
+        if(obj.servicoCriadoAqui){
+          if(temDinheiro){ toast('Este serviço já tem valor/lançamentos financeiros. Ajuste-o na aba Serviços antes de desvincular.'); return; }
+          if(!confirm('Desvincular vai remover o serviço "'+servicoAnterior.titulo+'" da aba Serviços (ele não tem valores). A atividade continua no Kanban. Continuar?')) return;
+          STATE.servicos = STATE.servicos.filter(s=>s.id!==servicoAnterior.id);
+          await persistDelete('servicos', servicoAnterior.id);
+        } else {
+          if(!confirm('Desvincular mantém o serviço "'+servicoAnterior.titulo+'" na aba Serviços (ele já existia). Continuar?')) return;
+          servicoAnterior.atividadeId = null;
+          await persist('servicos');
+        }
+      }
+      obj.servicoId = null; obj.vinculadaServico = false; obj.servicoCriadoAqui = false;
+    } else {
+      let alvo = null;
+      if(escolha && escolha!==ATV_NOVO){ alvo = findItem('servicos', escolha); }
+      if(!alvo){
+        // quer criar novo: confere se já não existe um igual antes de duplicar
+        const equiv = servicoEquivalente(titulo, clienteId, obj.id);
+        if(equiv && confirm('Já existe o serviço "'+equiv.titulo+'" para este cliente. Usar o existente em vez de criar outro?')) alvo = equiv;
+      }
+      if(!alvo){
+        alvo = { id: uid(), valor: 0, recorrente:'nao', duracaoRecorrencia:'indeterminado', dataInicio: todayISO(), atividadeId: obj.id };
+        STATE.servicos.push(alvo);
+        obj.servicoCriadoAqui = true;
+      } else if(alvo.id !== obj.servicoId){
+        obj.servicoCriadoAqui = false; // vinculou a um serviço que já existia
+      }
+      // se trocou de serviço, solta o antigo
+      if(servicoAnterior && servicoAnterior.id !== alvo.id){ servicoAnterior.atividadeId = null; }
+      // copia os dados da atividade (NUNCA mexe em valor/recorrência/financeiro)
+      alvo.atividadeId = obj.id;
+      alvo.titulo = obj.titulo;
+      alvo.descricao = obj.descricao;
+      alvo.clienteId = obj.clienteId;
+      alvo.clienteNome = obj.clienteNome;
+      alvo.status = obj.status;
+      alvo.prazoEntrega = obj.prazo;
+      alvo.responsavelId = obj.responsaveisIds[0] || '';
+      if(obj.status==='concluido') alvo.dataConclusao = obj.dataConclusao || todayISO();
+      obj.servicoId = alvo.id; obj.vinculadaServico = true;
+      if(!(await persist('servicos'))){ return; }
+    }
+
+    // ----- grava a atividade -----
+    const eraNova = !prev;
+    if(prev){ const i = STATE.atividades.findIndex(x=>x.id===prev.id); if(i>-1) STATE.atividades[i] = obj; }
+    else STATE.atividades.push(obj);
+    if(!(await persist('atividades'))){
+      if(eraNova) STATE.atividades = STATE.atividades.filter(x=>x.id!==obj.id);
+      else { const i = STATE.atividades.findIndex(x=>x.id===prev.id); if(i>-1) STATE.atividades[i] = prev; }
+      return;
+    }
+    toast(eraNova ? 'Atividade criada.' : 'Atividade atualizada.');
+    closeModal();
+    renderContent();
+  } finally {
+    salvandoAtividade = false;
+    const b = document.getElementById('modal-save'); if(b) b.disabled = false;
+  }
+}
+
+// Serviço editado na aba Serviços → reflete na atividade ligada a ele
+async function sincronizarAtividadeDoServico(sv){
+  const a = STATE.atividades.find(x=>x.id===sv.atividadeId);
+  if(!a) return;
+  a.titulo = sv.titulo;
+  a.descricao = sv.descricao;
+  a.clienteId = sv.clienteId || null;
+  a.clienteNome = sv.clienteId ? clienteNome(sv.clienteId) : null;
+  a.status = sv.status;
+  a.prazo = sv.prazoEntrega || null;
+  a.dataConclusao = sv.status==='concluido' ? (sv.dataConclusao || todayISO()) : null;
+  if(sv.responsavelId && !(a.responsaveisIds||[]).includes(sv.responsavelId)){
+    a.responsaveisIds = [...(a.responsaveisIds||[]), sv.responsavelId];
+  }
+  await persist('atividades');
+}
+
+// Serviço excluído na aba Serviços → a atividade continua, só perde o vínculo
+function desvincularAtividadeDoServico(servicoId){
+  const a = STATE.atividades.find(x=>x.servicoId===servicoId);
+  if(!a) return;
+  a.servicoId = null; a.vinculadaServico = false; a.servicoCriadoAqui = false;
+  persist('atividades');
+}
+
+// Excluir atividade: o serviço vinculado (se houver) é MANTIDO em Serviços
+// e volta a aparecer no Kanban como card de serviço.
+function excluirAtividade(id){
+  const a = findItem('atividades', id);
+  if(!a) return;
+  const sv = a.servicoId ? findItem('servicos', a.servicoId) : null;
+  const msg = sv ? 'Excluir esta atividade? O serviço vinculado continua na aba Serviços.' : 'Excluir esta atividade?';
+  if(!confirm(msg)) return;
+  if(sv){ sv.atividadeId = null; persist('servicos'); }
+  STATE.atividades = STATE.atividades.filter(x=>x.id!==id);
+  persistDelete('atividades', id);
+  toast('Atividade removida.');
+  renderContent();
 }
 
 /* ============ APARÊNCIA (modo escuro + cores do menu) ============ */
