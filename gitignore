@@ -1,0 +1,4 @@
+# Arquivos que o Git deve ignorar
+# (supabase-config.js NAO esta mais aqui: ele precisa ser publicado junto com o site)
+.DS_Store
+Thumbs.db
